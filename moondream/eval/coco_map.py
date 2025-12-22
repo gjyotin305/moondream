@@ -221,7 +221,7 @@ def get_total_map(results_by_label, frequency_by_label):
 
 def eval_coco_map(model, iou_threshold=0.5, debug=False):
     dataset = datasets.load_dataset(
-        "moondream/coco-val-2017-bbox-cleaned", split="validation"
+        "rafaelpadilla/coco2017", split="val[:10]"
     )
 
     total = 0
@@ -233,7 +233,8 @@ def eval_coco_map(model, iou_threshold=0.5, debug=False):
         height = row["image"].height
         total += 1
 
-        objects = json.loads(row["objects"])
+        # objects = json.loads(row["objects"])
+        objects = row['objects']
 
         gt_label_to_boxes = {}
 
@@ -305,7 +306,7 @@ if __name__ == "__main__":
     config = MoondreamConfig()
     model = MoondreamModel(config)
     load_weights_into_model(args.model, model)
-    model.compile()
+    # model.compile()
 
     result = eval_coco_map(model, 0.5, args.debug)
 

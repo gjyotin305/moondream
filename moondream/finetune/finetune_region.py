@@ -24,10 +24,10 @@ from ..torch.region import (
 
 
 # This is a intended to be a basic starting point. Your optimal hyperparams and data may be different.
-MODEL_PATH = ""
-LR = 3e-5
-EPOCHS = 1
-GRAD_ACCUM_STEPS = 64
+MODEL_PATH = "/iitjhome/asif_rs/.check_env/jyotin/scripts/moondream/moondream/finetune/model/model.safetensors"
+LR = 5e-6
+EPOCHS = 3
+GRAD_ACCUM_STEPS = 16
 
 random.seed(111)
 
@@ -161,6 +161,7 @@ def main():
 
     config = MoondreamConfig()
     model = MoondreamModel(config)
+    model.compile()
     load_weights_into_model(MODEL_PATH, model)
 
     optimizer = AdamW8bit(
@@ -172,8 +173,8 @@ def main():
 
     # Add path to annotation file and img dir
     dataset = CocoDataset(
-        annotation_file="",
-        img_dir="",
+        annotation_file="/iitjhome/asif_rs/.check_env/jyotin/scripts/moondream/moondream/finetune/datasets/train/_annotations.coco.json",
+        img_dir="/iitjhome/asif_rs/.check_env/jyotin/scripts/moondream/moondream/finetune/datasets/train",
     )
 
     total_steps = EPOCHS * len(dataset) // GRAD_ACCUM_STEPS
