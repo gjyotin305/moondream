@@ -25,7 +25,7 @@ from ..torch.region import (
 
 
 # This is a intended to be a basic starting point. Your optimal hyperparams and data may be different.
-MODEL_PATH = "/iitjhome/asif_rs/.check_env/jyotin/scripts/moondream/moondream/finetune/model/model.safetensors"
+MODEL_PATH = "/scratch/data/asif_rs/mooondream_models/model_25_06_21.safetensors"
 LR = 5e-6
 EPOCHS = 1
 GRAD_ACCUM_STEPS = 128
@@ -64,9 +64,9 @@ def region_loss(
     s_hidden = hidden_states[:, s_idx, :]
     s_logits = decode_size(s_hidden, w).view(-1, 1024)
     s_labels = labels[(l_idx % 4) >= 2]
-
+    
     s_loss = F.cross_entropy(s_logits, s_labels)
-
+    
     return c_loss + s_loss
 
 
@@ -123,8 +123,8 @@ class CocoHFDataset(Dataset):
             boxes_out.append([cx, cy, bw, bh])
             labels_out.append(label)
 
-        boxes = torch.tensor(boxes_out, dtype=torch.float32)
-        labels = torch.tensor(labels_out, dtype=torch.int64)
+        boxes = torch.tensor(boxes_out, dtype=torch.bfloat16)
+        # labels = torch.tensor(labels_out, dtype=torch.int64)
 
         if self.transform is not None:
             image = self.transform(image)
@@ -164,8 +164,6 @@ def main():
         eps=1e-6,
     )
 
-    # Add path to annotation file and img dir
-
     hf_dataset = load_dataset(
         'rafaelpadilla/coco2017',
         split='train'
@@ -174,11 +172,6 @@ def main():
     dataset = CocoHFDataset(
         hf_dataset=hf_dataset
     )
-
-    #  dataset = CocoHFDataset(
-    #     annotation_file="/scratch/data/asif_rs/data/COCO/train/_annotations.coco.json",
-    #     img_dir="/scratch/data/asif_rs/data/COCO/train",
-    # )
 
     total_steps = EPOCHS * len(dataset) // GRAD_ACCUM_STEPS
     pbar = tqdm(total=total_steps)
@@ -204,10 +197,14 @@ def main():
                 )
 
             boxes_by_class = {}
-            for box, cls in zip(sample["boxes"], sample["class_names"]):
+            for box, cls in zip(sample["boxes"], sample["labels"]):
                 boxes_by_class.setdefault(cls, []).append(box)
 
             total_loss = 0.0
+            if len(boxes_by_class) == 0:
+                continue
+            # print(len(boxes_by_class))
+            # print(sample['labels'])
             for class_name, boxes_list in boxes_by_class.items():
                 with torch.no_grad():
                     instruction = f"\n\nDetect: {class_name}\n\n"
@@ -232,15 +229,18 @@ def main():
                     )
                     c_idx.extend([l_cs, l_cs + 1])
                     s_idx.append(l_cs + 2)
-                    cs_labels.extend(
-                        [
-                            int(torch.clamp(torch.round(p * 1023), 0, 1023).item())
-                            for p in bb
-                        ]
-                    )
+                    vals = (bb.clamp(0.0, 1.0)* 1023).round()
+                    vals = vals.to(torch.int32)
+                    vals = torch.clamp(vals, max=1023)
+                    cs_labels.extend(vals.tolist())
+
+                # print(vals)
+                # print(len(cs_emb))
 
                 if len(cs_emb) == 0:
+                    print('Called')
                     continue
+
                 cs_emb = torch.stack(cs_emb)
 
                 inputs_embeds = torch.cat(
@@ -255,6 +255,8 @@ def main():
                     inputs_embeds=inputs_embeds, w=model.text, config=config.text
                 )
 
+                # print(hidden.shape)
+                
                 loss = region_loss(
                     hidden_states=hidden,
                     w=model.region,
@@ -262,8 +264,12 @@ def main():
                     c_idx=c_idx,
                     s_idx=s_idx,
                 )
+                # print(loss)
                 total_loss += loss
-
+                # print(total_loss)
+            
+            # print(total_loss)
+            # print(total_loss)
             total_loss.backward()
 
             if i % GRAD_ACCUM_STEPS == 0:
@@ -288,7 +294,7 @@ def main():
     # Replace with your desired output location.
     save_file(
         model.state_dict(),
-        "moondream_finetune.safetensors",
+        "/scratch/data/asif_rs/mooondream_models/moondream_finetune.safetensors",
     )
 
 
