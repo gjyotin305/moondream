@@ -4,6 +4,7 @@ import torch
 from torch.utils.data import Dataset
 import torch.nn.functional as F
 import math
+from datasets import load_dataset
 from safetensors.torch import save_file
 
 from PIL import Image
@@ -26,8 +27,8 @@ from ..torch.region import (
 # This is a intended to be a basic starting point. Your optimal hyperparams and data may be different.
 MODEL_PATH = "/iitjhome/asif_rs/.check_env/jyotin/scripts/moondream/moondream/finetune/model/model.safetensors"
 LR = 5e-6
-EPOCHS = 3
-GRAD_ACCUM_STEPS = 16
+EPOCHS = 1
+GRAD_ACCUM_STEPS = 128
 
 random.seed(111)
 
@@ -69,78 +70,70 @@ def region_loss(
     return c_loss + s_loss
 
 
-class CocoDataset(Dataset):
+class CocoHFDataset(Dataset):
     """
-    Dataset class for COCO type data.
-    Make sure to use COCO JSON format.
+    COCO-style Dataset backed by HuggingFace datasets.
+    Outputs YOLO-normalized boxes + integer labels.
     """
 
-    def __init__(self, annotation_file, img_dir, transform=None):
-        self.annotation_file = annotation_file
-        self.img_dir = img_dir
+    def __init__(self, hf_dataset, transform=None):
+        """
+        hf_dataset: HuggingFace Dataset split (train / val)
+        """
+        self.dataset = hf_dataset
         self.transform = transform
 
-        with open(self.annotation_file, "r") as f:
-            data = json.load(f)
-
-        self.images = data["images"]
-        self.annotations = data["annotations"]
-        self.categories = data.get("categories", [])
-        self.class_id_to_name = {cat["id"]: cat["name"] for cat in self.categories}
-
-        self.img_id_to_anns = {}
-        for ann in self.annotations:
-            img_id = ann["image_id"]
-            if img_id not in self.img_id_to_anns:
-                self.img_id_to_anns[img_id] = []
-            self.img_id_to_anns[img_id].append(ann)
-
-        self.ids = []
-        self.id_to_img = {}
-        for img_info in self.images:
-            img_id = img_info["id"]
-            if img_id in self.img_id_to_anns and len(self.img_id_to_anns[img_id]) > 0:
-                self.ids.append(img_id)
-                self.id_to_img[img_id] = img_info
-        random.shuffle(self.ids)
-
     def __len__(self):
-        return len(self.ids)
+        return len(self.dataset)
 
     def __getitem__(self, idx):
-        image_id = self.ids[idx]
-        img_info = self.id_to_img[image_id]
+        example = self.dataset[idx]
 
-        file_name = img_info["file_name"]
-        height = img_info["height"]
-        width = img_info["width"]
-        img_path = os.path.join(self.img_dir, file_name)
-        image = Image.open(img_path).convert("RGB")
+        image = example["image"].convert("RGB")
+        img_w, img_h = image.size
 
-        ann_list = self.img_id_to_anns[image_id]
+        objects = example["objects"]
+        bboxes = objects["bbox"]      # [[x,y,w,h], ...]
+        labels = objects["label"]     # [class_id, ...]
 
-        boxes = []
-        class_names = []
-        for ann in ann_list:
-            bbox = ann["bbox"]
-            boxes.append(
-                [
-                    (bbox[0] + (bbox[2] / 2)) / width,
-                    (bbox[1] + (bbox[3] / 2)) / height,
-                    bbox[2] / width,
-                    bbox[3] / height,
-                ]
-            )
-            category_id = ann.get("category_id")
-            class_names.append(self.class_id_to_name.get(category_id, "unknown"))
+        boxes_out = []
+        labels_out = []
 
-        boxes = torch.as_tensor(boxes, dtype=torch.float16)
+        for bbox, label in zip(bboxes, labels):
+            x, y, w, h = bbox
+
+            # ---- basic bbox validation ----
+            if not all(map(math.isfinite, [x, y, w, h])):
+                continue
+            if w <= 0 or h <= 0:
+                continue
+
+            # ---- COCO -> YOLO (normalized) ----
+            cx = (x + w / 2) / img_w
+            cy = (y + h / 2) / img_h
+            bw = w / img_w
+            bh = h / img_h
+
+            # Clamp to [0, 1] for safety
+            cx = min(max(cx, 0.0), 1.0)
+            cy = min(max(cy, 0.0), 1.0)
+            bw = min(max(bw, 0.0), 1.0)
+            bh = min(max(bh, 0.0), 1.0)
+
+            boxes_out.append([cx, cy, bw, bh])
+            labels_out.append(label)
+
+        boxes = torch.tensor(boxes_out, dtype=torch.float32)
+        labels = torch.tensor(labels_out, dtype=torch.int64)
+
+        if self.transform is not None:
+            image = self.transform(image)
 
         return {
             "image": image,
-            "boxes": boxes,
-            "image_id": torch.tensor([image_id], dtype=torch.int64),
-            "class_names": class_names,
+            "boxes": boxes,        # (N, 4) YOLO format
+            "labels": labels,      # (N,) integer class IDs
+            "image_id": example['image_id'],
         }
 
 
@@ -172,10 +165,20 @@ def main():
     )
 
     # Add path to annotation file and img dir
-    dataset = CocoDataset(
-        annotation_file="/iitjhome/asif_rs/.check_env/jyotin/scripts/moondream/moondream/finetune/datasets/train/_annotations.coco.json",
-        img_dir="/iitjhome/asif_rs/.check_env/jyotin/scripts/moondream/moondream/finetune/datasets/train",
+
+    hf_dataset = load_dataset(
+        'rafaelpadilla/coco2017',
+        split='train'
     )
+
+    dataset = CocoHFDataset(
+        hf_dataset=hf_dataset
+    )
+
+    #  dataset = CocoHFDataset(
+    #     annotation_file="/scratch/data/asif_rs/data/COCO/train/_annotations.coco.json",
+    #     img_dir="/scratch/data/asif_rs/data/COCO/train",
+    # )
 
     total_steps = EPOCHS * len(dataset) // GRAD_ACCUM_STEPS
     pbar = tqdm(total=total_steps)

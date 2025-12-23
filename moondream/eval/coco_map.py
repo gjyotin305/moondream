@@ -221,7 +221,7 @@ def get_total_map(results_by_label, frequency_by_label):
 
 def eval_coco_map(model, iou_threshold=0.5, debug=False):
     dataset = datasets.load_dataset(
-        "rafaelpadilla/coco2017", split="val[:10]"
+        "rafaelpadilla/coco2017", split="val[:100]"
     )
 
     total = 0

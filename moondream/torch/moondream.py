@@ -85,7 +85,7 @@ class MoondreamModel(nn.Module):
         self.config = config
 
         self.tokenizer = Tokenizer.from_pretrained(
-            "vikhyatk/moondream2", revision="2024-08-26"
+            "vikhyatk/moondream2", revision="2025-06-21"
         )
         self.vision = build_vision_model(config.vision, dtype)
         self.text = build_text_model(config.text, dtype)
