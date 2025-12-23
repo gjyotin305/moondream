@@ -29,7 +29,7 @@ def safetensors_open(safetensors_file: str):
 
 def _load_weights(get_tensor: Callable[[str], torch.Tensor], model: nn.Module) -> None:
     """Internal function to load weights using a tensor getter function."""
-    model = model.to(dtype=torch.float16)
+    model = model.to(dtype=torch.bfloat16)
 
     vision = model.vision
     region = model.region
@@ -54,20 +54,12 @@ def _load_weights(get_tensor: Callable[[str], torch.Tensor], model: nn.Module) -
         "text_model.lm_head.linear.bias": model.text["lm_head"].bias,
         "region_model.coordinate_encoder.weight": region["coord_encoder"].weight,
         "region_model.coordinate_encoder.bias": region["coord_encoder"].bias,
-        "region_model.coordinate_decoder.fc1.weight": region["coord_decoder"][
-            "fc1"
-        ].weight,
-        "region_model.coordinate_decoder.fc1.bias": region["coord_decoder"]["fc1"].bias,
-        "region_model.coordinate_decoder.fc2.weight": region["coord_decoder"][
-            "fc2"
-        ].weight,
-        "region_model.coordinate_decoder.fc2.bias": region["coord_decoder"]["fc2"].bias,
+        "region_model.coordinate_head.weight": region["coord_decoder"].weight,
+        "region_model.coordinate_head.bias": region["coord_decoder"].bias,
         "region_model.size_encoder.weight": region["size_encoder"].weight,
         "region_model.size_encoder.bias": region["size_encoder"].bias,
-        "region_model.size_decoder.fc1.weight": region["size_decoder"]["fc1"].weight,
-        "region_model.size_decoder.fc1.bias": region["size_decoder"]["fc1"].bias,
-        "region_model.size_decoder.fc2.weight": region["size_decoder"]["fc2"].weight,
-        "region_model.size_decoder.fc2.bias": region["size_decoder"]["fc2"].bias,
+        "region_model.size_head.weight": region["size_decoder"].weight,
+        "region_model.size_head.bias": region["size_decoder"].bias,
     }
 
     for i in range(len(model.vision["blocks"])):
@@ -93,6 +85,7 @@ def _load_weights(get_tensor: Callable[[str], torch.Tensor], model: nn.Module) -
     for i in range(len(model.text["blocks"])):
         prefix = f"text_model.transformer.h.{i}"
         blk = model.text["blocks"][i]
+        is_moe = hasattr(blk.mlp, "router")
         weight_map.update(
             {
                 f"{prefix}.ln.weight": blk["ln"].weight,
@@ -101,12 +94,29 @@ def _load_weights(get_tensor: Callable[[str], torch.Tensor], model: nn.Module) -
                 f"{prefix}.mixer.Wqkv.bias": blk["attn"]["qkv"].bias,
                 f"{prefix}.mixer.out_proj.weight": blk["attn"]["proj"].weight,
                 f"{prefix}.mixer.out_proj.bias": blk["attn"]["proj"].bias,
-                f"{prefix}.mlp.fc1.weight": blk["mlp"]["fc1"].weight,
-                f"{prefix}.mlp.fc1.bias": blk["mlp"]["fc1"].bias,
-                f"{prefix}.mlp.fc2.weight": blk["mlp"]["fc2"].weight,
-                f"{prefix}.mlp.fc2.bias": blk["mlp"]["fc2"].bias,
+                f"{prefix}.tau_wq": blk["attn"]["tau"]["wq"],
+                f"{prefix}.tau_wv": blk["attn"]["tau"]["wv"],
+                f"{prefix}.tau_alpha": blk["attn"]["tau"]["alpha"],
             }
         )
+        if is_moe:
+            weight_map.update(
+                {
+                    f"{prefix}.gate.weight": blk["mlp"]["router"].weight,
+                    f"{prefix}.gate.bias": blk["mlp"]["router"].bias,
+                    f"{prefix}.mlp.experts.weight": blk["mlp"]["fc1"].weight,
+                    f"{prefix}.mlp.output_experts.weight": blk["mlp"]["fc2"].weight,
+                }
+            )
+        else:
+            weight_map.update(
+                {
+                    f"{prefix}.mlp.fc1.weight": blk["mlp"]["fc1"].weight,
+                    f"{prefix}.mlp.fc1.bias": blk["mlp"]["fc1"].bias,
+                    f"{prefix}.mlp.fc2.weight": blk["mlp"]["fc2"].weight,
+                    f"{prefix}.mlp.fc2.bias": blk["mlp"]["fc2"].bias,
+                }
+            )
 
     for key, tensor in weight_map.items():
         tensor.data.copy_(get_tensor(key))
@@ -133,7 +143,7 @@ def load_weights_from_safetensors(weights_file: str, model: nn.Module) -> None:
             # Wrap the get_tensor function to handle key normalization
             name_map = {k.replace("._orig_mod", ""): k for k in get_tensor.keys()}
             _load_weights(
-                lambda x: get_tensor(name_map[x]).to(dtype=torch.float16), model
+                lambda x: get_tensor(name_map[x]).to(dtype=torch.bfloat16), model
             )
 
 
@@ -142,10 +152,12 @@ def load_weights_from_pt(weights_file: str, model: nn.Module) -> None:
     device = str(torch.empty(0).device)
     tensors = torch.load(weights_file, map_location=device, weights_only=True)
     if "vision.blocks.0.attn.proj.bias" in tensors.keys():
-        model.load_state_dict(tensors, strict=False)
+        missing_keys, unexpected_keys = model.load_state_dict(tensors, strict=False)
+        print("Missing keys:", missing_keys)
+        print("Unexpected keys:", unexpected_keys)
     else:
         tensors = {
-            k.replace("._orig_mod", ""): v.to(dtype=torch.float16)
+            k.replace("._orig_mod", ""): v.to(dtype=torch.bfloat16)
             for k, v in tensors.items()
         }
         _load_weights(lambda x: tensors[x], model)

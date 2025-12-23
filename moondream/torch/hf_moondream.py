@@ -1,4 +1,8 @@
+import torch
+import torch.nn as nn
+
 from transformers import PreTrainedModel, PretrainedConfig
+from typing import Union
 
 from .config import MoondreamConfig
 from .moondream import MoondreamModel
@@ -123,7 +127,7 @@ class HfMoondream(PreTrainedModel):
             )
 
             def generator():
-                for token in self.model._generate_text(
+                for token in self.model._generate_answer(
                     prompt_tokens,
                     image_embeds.kv_cache,
                     image_embeds.pos,
@@ -135,8 +139,45 @@ class HfMoondream(PreTrainedModel):
 
         return [answer]
 
-    def get_input_embeddings(self):
-        return super().get_input_embeddings()
+    def get_input_embeddings(self) -> nn.Embedding:
+        """
+        Lazily wrap the raw parameter `self.model.text.wte` in a real
+        `nn.Embedding` layer so that HF mix-ins recognise it.  The wrapper
+        **shares** the weight tensor—no copy is made.
+        """
+        if not hasattr(self, "_input_embeddings"):
+            self._input_embeddings = nn.Embedding.from_pretrained(
+                self.model.text.wte,  # tensor created in text.py
+                freeze=True,  # set to False if you need it trainable
+            )
+        return self._input_embeddings
 
-    def input_embeds(self, *args, **kwargs):
-        self._unsupported_exception()
+    def set_input_embeddings(self, value: Union[nn.Embedding, nn.Module]) -> None:
+        """
+        Lets HF functions (e.g. `resize_token_embeddings`) replace or resize the
+        embeddings and keeps everything tied to `self.model.text.wte`.
+        """
+        # 1. point the low-level parameter to the new weight matrix
+        self.model.text.wte = value.weight
+        # 2. keep a reference for get_input_embeddings()
+        self._input_embeddings = value
+
+    def input_embeds(
+        self,
+        input_ids: Union[torch.LongTensor, list, tuple],
+        *,
+        device: torch.device | None = None
+    ) -> torch.FloatTensor:
+        """
+        Back-compat wrapper that turns token IDs into embeddings.
+
+        Example:
+            ids = torch.tensor([[1, 2, 3]])
+            embeds = model.input_embeds(ids)      # (1, 3, hidden_dim)
+        """
+        if not torch.is_tensor(input_ids):
+            input_ids = torch.as_tensor(input_ids)
+        if device is not None:
+            input_ids = input_ids.to(device)
+
+        return self.get_input_embeddings()(input_ids)
