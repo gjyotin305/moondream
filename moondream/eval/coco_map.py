@@ -221,7 +221,7 @@ def get_total_map(results_by_label, frequency_by_label):
 
 def eval_coco_map(model, iou_threshold=0.5, debug=False):
     dataset = datasets.load_dataset(
-        "rafaelpadilla/coco2017", split="val[:100]"
+        "rafaelpadilla/coco2017", split="val"
     )
 
     total = 0
@@ -306,6 +306,7 @@ if __name__ == "__main__":
     config = MoondreamConfig()
     model = MoondreamModel(config)
     load_weights_into_model(args.model, model)
+    model = model.to('cuda', dtype=torch.bfloat16)
     # model.compile()
 
     result = eval_coco_map(model, 0.5, args.debug)
