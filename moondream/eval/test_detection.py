@@ -3,6 +3,7 @@ from ..torch.moondream import MoondreamModel
 from ..torch.weights import load_weights_into_model
 from tqdm import tqdm
 import torch
+import argparse
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from PIL import ImageDraw
 import os
@@ -185,7 +186,6 @@ def eval_coco_map(model, iou_threshold=0.5, debug=False):
                     )
                 )
 
-            # 🔴 ONLY ADDITION: draw + save
             draw_and_save_bboxes(
                 image=row["image"],
                 pred_boxes=moondream_boxes,
@@ -196,10 +196,14 @@ def eval_coco_map(model, iou_threshold=0.5, debug=False):
 
 if __name__ == "__main__":
 
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", type=str, required=True)
+    args = parser.parse_args()
+
     cfg = MoondreamConfig()
     model = MoondreamModel(cfg)
     load_weights_into_model(
-        '/scratch/data/asif_rs/mooondream_models/model_25_06_21.safetensors', 
+        args.model, 
         model
     )
     model = model.to('cuda')
