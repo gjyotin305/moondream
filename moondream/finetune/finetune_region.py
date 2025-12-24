@@ -24,9 +24,109 @@ from ..torch.region import (
 )
 
 
+coco_classes = [
+    "None",
+    "person",
+    "bicycle",
+    "car",
+    "motorcycle",
+    "airplane",
+    "bus",
+    "train",
+    "truck",
+    "boat",
+    "traffic light",
+    "fire hydrant",
+    "street sign",
+    "stop sign",
+    "parking meter",
+    "bench",
+    "bird",
+    "cat",
+    "dog",
+    "horse",
+    "sheep",
+    "cow",
+    "elephant",
+    "bear",
+    "zebra",
+    "giraffe",
+    "hat",
+    "backpack",
+    "umbrella",
+    "shoe",
+    "eye glasses",
+    "handbag",
+    "tie",
+    "suitcase",
+    "frisbee",
+    "skis",
+    "snowboard",
+    "sports ball",
+    "kite",
+    "baseball bat",
+    "baseball glove",
+    "skateboard",
+    "surfboard",
+    "tennis racket",
+    "bottle",
+    "plate",
+    "wine glass",
+    "cup",
+    "fork",
+    "knife",
+    "spoon",
+    "bowl",
+    "banana",
+    "apple",
+    "sandwich",
+    "orange",
+    "broccoli",
+    "carrot",
+    "hot dog",
+    "pizza",
+    "donut",
+    "cake",
+    "chair",
+    "couch",
+    "potted plant",
+    "bed",
+    "mirror",
+    "dining table",
+    "window",
+    "desk",
+    "toilet",
+    "door",
+    "tv",
+    "laptop",
+    "mouse",
+    "remote",
+    "keyboard",
+    "cell phone",
+    "microwave",
+    "oven",
+    "toaster",
+    "sink",
+    "refrigerator",
+    "blender",
+    "book",
+    "clock",
+    "vase",
+    "scissors",
+    "teddy bear",
+    "hair drier",
+    "toothbrush",
+    "hair brush",
+]
+
+COCO_LABELS = {}
+
+for i, c in enumerate(coco_classes):
+    COCO_LABELS[i] = c
+
 # This is a intended to be a basic starting point. Your optimal hyperparams and data may be different.
 MODEL_PATH = "/scratch/data/asif_rs/mooondream_models/model_25_06_21.safetensors"
-LR = 5e-6
+LR = 3e-5
 EPOCHS = 1
 GRAD_ACCUM_STEPS = 128
 
@@ -40,6 +140,15 @@ def lr_schedule(step, max_steps):
     else:
         return 0.1 * LR + 0.9 * LR * (1 + math.cos(math.pi * (x - 0.1))) / 2
 
+@torch.no_grad()
+def gradient_norm(params):
+    """Computes the 2-norm of the gradients of the given parameters."""
+    total = torch.tensor(0.0)
+    for p in params:
+        if p.grad is not None:
+            total = total.to(p.grad.device)
+            total += torch.norm(p.grad, dtype=total.dtype) ** 2
+    return torch.sqrt(total)
 
 def region_loss(
     hidden_states: torch.Tensor,
@@ -173,6 +282,13 @@ def main():
         hf_dataset=hf_dataset
     )
 
+    # print("Any region params require grad:",
+    #   any(p.requires_grad for p in model.region.parameters()))
+    
+    for p in model.region.parameters():
+        p.requires_grad_(True)
+
+
     total_steps = EPOCHS * len(dataset) // GRAD_ACCUM_STEPS
     pbar = tqdm(total=total_steps)
 
@@ -203,11 +319,11 @@ def main():
             total_loss = 0.0
             if len(boxes_by_class) == 0:
                 continue
-            # print(len(boxes_by_class))
-            # print(sample['labels'])
+           
+
             for class_name, boxes_list in boxes_by_class.items():
                 with torch.no_grad():
-                    instruction = f"\n\nDetect: {class_name}\n\n"
+                    instruction = f"\n\nDetect: {COCO_LABELS[class_name]}\n\n"
                     instruction_tokens = model.tokenizer.encode(instruction).ids
                     instruction_emb = text_encoder(
                         torch.tensor([[instruction_tokens]], device=model.device),
@@ -268,25 +384,32 @@ def main():
                 total_loss += loss
                 # print(total_loss)
             
-            # print(total_loss)
-            # print(total_loss)
+            # total_loss = total_loss
             total_loss.backward()
 
-            if i % GRAD_ACCUM_STEPS == 0:
-                optimizer.step()
-                optimizer.zero_grad()
 
+            if i % GRAD_ACCUM_STEPS == 0:
+                # grad_norm = gradient_norm(model.region.parameters())
+                # pre_clip = gradient_norm(model.region.parameters())
+                torch.nn.utils.clip_grad_norm_(model.region.parameters(), 1.0)
+                post_clip = gradient_norm(model.region.parameters())
+
+                optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
+
+                # grad_norm = gradient_norm(model.region.parameters())
                 lr_val = lr_schedule(i / GRAD_ACCUM_STEPS, total_steps)
                 for param_group in optimizer.param_groups:
                     param_group["lr"] = lr_val
                 pbar.set_postfix(
-                    {"step": i // GRAD_ACCUM_STEPS, "loss": total_loss.item()}
+                    {"step": i // GRAD_ACCUM_STEPS, "loss": total_loss.item(), "pre_grad_norm": pre_clip.item(), "post_grad_norm": post_clip.item()}
                 )
                 pbar.update(1)
                 wandb.log(
                     {
                         "loss/train": total_loss.item(),
                         "lr": optimizer.param_groups[0]["lr"],
+                        "gradient_norm/train": post_clip.item()
                     }
                 )
     wandb.finish()
