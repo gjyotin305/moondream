@@ -9,6 +9,24 @@ from PIL import ImageDraw
 import os
 import datasets
 
+dota_id_to_label = {
+    0: "plane",
+    1: "ship",
+    2: "storage-tank",
+    3: "baseball-diamond",
+    4: "tennis-court",
+    5: "basketball-court",
+    6: "ground-track-field",
+    7: "harbor",
+    8: "bridge",
+    9: "small-vehicle",
+    10: "large-vehicle",
+    11: "roundabout",
+    12: "swimming-pool",
+    13: "helicopter",
+    14: "soccer-ball-field",
+    15: "container-crane",
+}
 
 
 coco_classes = [
@@ -140,6 +158,59 @@ def draw_and_save_bboxes(image, pred_boxes, gt_boxes, save_path, label_name):
     img.save(save_path)
 
 
+def eval_dota(model):
+    dataset = datasets.load_dataset(
+        "HichTala/dota", split="train[:10]"
+    )
+
+    total = 0
+    results_by_label = {}
+    frequency_by_label = {}
+
+    for row in tqdm(dataset, desc="DOTA"):
+        width = row["image"].width
+        height = row["image"].height
+        total += 1
+
+        objects = row["objects"]
+
+        gt_label_to_boxes = {}
+
+        for bbox, label in zip(objects["bbox"], objects["category"]):
+            if label not in gt_label_to_boxes:
+                gt_label_to_boxes[label] = []
+            x1, y1, w, h = bbox
+            gt_label_to_boxes[label].append((x1, y1, x1 + w, y1 + h))
+
+        unique_labels = [label for label in set(objects["category"])]
+
+        encoded_image = model.encode_image(row["image"])
+            
+        for label in unique_labels:
+
+            model_answer = model.detect(encoded_image, dota_id_to_label[label])["objects"]
+
+            moondream_boxes = []
+
+            for box in model_answer:
+                moondream_boxes.append(
+                    (
+                        box["x_min"] * width,
+                        box["y_min"] * height,
+                        box["x_max"] * width,
+                        box["y_max"] * height,
+                        1.0,
+                    )
+                )
+
+            draw_and_save_bboxes(
+                image=row["image"],
+                pred_boxes=moondream_boxes,
+                gt_boxes=gt_label_to_boxes[label],
+                save_path=f"moondream_preds/img_{total}_label_{dota_id_to_label[label]}.jpg",
+                label_name=dota_id_to_label[label],
+            )
+
 
 def eval_coco_map(model, iou_threshold=0.5, debug=False):
     dataset = datasets.load_dataset(
@@ -214,4 +285,4 @@ if __name__ == "__main__":
     #     device_map={"": "cuda"}  # ...or 'mps', on Apple Silicon
     # )
 
-    eval_coco_map(model=model)
+    eval_dota(model=model)

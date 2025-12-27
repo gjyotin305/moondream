@@ -24,110 +24,129 @@ from ..torch.region import (
 )
 
 
-coco_classes = [
-    "None",
-    "person",
-    "bicycle",
-    "car",
-    "motorcycle",
-    "airplane",
-    "bus",
-    "train",
-    "truck",
-    "boat",
-    "traffic light",
-    "fire hydrant",
-    "street sign",
-    "stop sign",
-    "parking meter",
-    "bench",
-    "bird",
-    "cat",
-    "dog",
-    "horse",
-    "sheep",
-    "cow",
-    "elephant",
-    "bear",
-    "zebra",
-    "giraffe",
-    "hat",
-    "backpack",
-    "umbrella",
-    "shoe",
-    "eye glasses",
-    "handbag",
-    "tie",
-    "suitcase",
-    "frisbee",
-    "skis",
-    "snowboard",
-    "sports ball",
-    "kite",
-    "baseball bat",
-    "baseball glove",
-    "skateboard",
-    "surfboard",
-    "tennis racket",
-    "bottle",
-    "plate",
-    "wine glass",
-    "cup",
-    "fork",
-    "knife",
-    "spoon",
-    "bowl",
-    "banana",
-    "apple",
-    "sandwich",
-    "orange",
-    "broccoli",
-    "carrot",
-    "hot dog",
-    "pizza",
-    "donut",
-    "cake",
-    "chair",
-    "couch",
-    "potted plant",
-    "bed",
-    "mirror",
-    "dining table",
-    "window",
-    "desk",
-    "toilet",
-    "door",
-    "tv",
-    "laptop",
-    "mouse",
-    "remote",
-    "keyboard",
-    "cell phone",
-    "microwave",
-    "oven",
-    "toaster",
-    "sink",
-    "refrigerator",
-    "blender",
-    "book",
-    "clock",
-    "vase",
-    "scissors",
-    "teddy bear",
-    "hair drier",
-    "toothbrush",
-    "hair brush",
-]
+dota_id_to_label = {
+    0: "plane",
+    1: "ship",
+    2: "storage-tank",
+    3: "baseball-diamond",
+    4: "tennis-court",
+    5: "basketball-court",
+    6: "ground-track-field",
+    7: "harbor",
+    8: "bridge",
+    9: "small-vehicle",
+    10: "large-vehicle",
+    11: "roundabout",
+    12: "swimming-pool",
+    13: "helicopter",
+    14: "soccer-ball-field",
+    15: "container-crane",
+}
 
-COCO_LABELS = {}
+# coco_classes = [
+#     "None",
+#     "person",
+#     "bicycle",
+#     "car",
+#     "motorcycle",
+#     "airplane",
+#     "bus",
+#     "train",
+#     "truck",
+#     "boat",
+#     "traffic light",
+#     "fire hydrant",
+#     "street sign",
+#     "stop sign",
+#     "parking meter",
+#     "bench",
+#     "bird",
+#     "cat",
+#     "dog",
+#     "horse",
+#     "sheep",
+#     "cow",
+#     "elephant",
+#     "bear",
+#     "zebra",
+#     "giraffe",
+#     "hat",
+#     "backpack",
+#     "umbrella",
+#     "shoe",
+#     "eye glasses",
+#     "handbag",
+#     "tie",
+#     "suitcase",
+#     "frisbee",
+#     "skis",
+#     "snowboard",
+#     "sports ball",
+#     "kite",
+#     "baseball bat",
+#     "baseball glove",
+#     "skateboard",
+#     "surfboard",
+#     "tennis racket",
+#     "bottle",
+#     "plate",
+#     "wine glass",
+#     "cup",
+#     "fork",
+#     "knife",
+#     "spoon",
+#     "bowl",
+#     "banana",
+#     "apple",
+#     "sandwich",
+#     "orange",
+#     "broccoli",
+#     "carrot",
+#     "hot dog",
+#     "pizza",
+#     "donut",
+#     "cake",
+#     "chair",
+#     "couch",
+#     "potted plant",
+#     "bed",
+#     "mirror",
+#     "dining table",
+#     "window",
+#     "desk",
+#     "toilet",
+#     "door",
+#     "tv",
+#     "laptop",
+#     "mouse",
+#     "remote",
+#     "keyboard",
+#     "cell phone",
+#     "microwave",
+#     "oven",
+#     "toaster",
+#     "sink",
+#     "refrigerator",
+#     "blender",
+#     "book",
+#     "clock",
+#     "vase",
+#     "scissors",
+#     "teddy bear",
+#     "hair drier",
+#     "toothbrush",
+#     "hair brush",
+# ]
 
-for i, c in enumerate(coco_classes):
-    COCO_LABELS[i] = c
+# COCO_LABELS = {}
+
+# for i, c in enumerate(coco_classes):
+#     COCO_LABELS[i] = c
 
 # This is a intended to be a basic starting point. Your optimal hyperparams and data may be different.
 MODEL_PATH = "/scratch/data/asif_rs/mooondream_models/model_25_06_21.safetensors"
 LR = 3e-5
-EPOCHS = 1
+EPOCHS = 10
 GRAD_ACCUM_STEPS = 128
 
 random.seed(111)
@@ -203,7 +222,7 @@ class CocoHFDataset(Dataset):
 
         objects = example["objects"]
         bboxes = objects["bbox"]      # [[x,y,w,h], ...]
-        labels = objects["label"]     # [class_id, ...]
+        labels = objects["category"]     # [class_id, ...]
 
         boxes_out = []
         labels_out = []
@@ -222,12 +241,6 @@ class CocoHFDataset(Dataset):
             cy = (y + h / 2) / img_h
             bw = w / img_w
             bh = h / img_h
-
-            # Clamp to [0, 1] for safety
-            cx = min(max(cx, 0.0), 1.0)
-            cy = min(max(cy, 0.0), 1.0)
-            bw = min(max(bw, 0.0), 1.0)
-            bh = min(max(bh, 0.0), 1.0)
 
             boxes_out.append([cx, cy, bw, bh])
             labels_out.append(label)
@@ -274,8 +287,8 @@ def main():
     )
 
     hf_dataset = load_dataset(
-        'rafaelpadilla/coco2017',
-        split='train'
+        'HichTala/dota',
+        split='train[:1000]'
     )
 
     dataset = CocoHFDataset(
@@ -323,7 +336,7 @@ def main():
 
             for class_name, boxes_list in boxes_by_class.items():
                 with torch.no_grad():
-                    instruction = f"\n\nDetect: {COCO_LABELS[class_name]}\n\n"
+                    instruction = f"\n\nDetect: {dota_id_to_label[class_name]}\n\n"
                     instruction_tokens = model.tokenizer.encode(instruction).ids
                     instruction_emb = text_encoder(
                         torch.tensor([[instruction_tokens]], device=model.device),
@@ -367,9 +380,14 @@ def main():
                 c_idx = torch.tensor(c_idx) + prefix
                 s_idx = torch.tensor(s_idx) + prefix
 
-                hidden = _produce_hidden(
-                    inputs_embeds=inputs_embeds, w=model.text, config=config.text
-                )
+                try:
+                    hidden = _produce_hidden(
+                        inputs_embeds=inputs_embeds, w=model.text, config=config.text
+                    )
+                except Exception as e:
+                    print(f'Exception as {e}')
+                    print(inputs_embeds.shape)
+                    print(sample)
 
                 # print(hidden.shape)
                 
@@ -384,14 +402,13 @@ def main():
                 total_loss += loss
                 # print(total_loss)
             
-            # total_loss = total_loss
-            total_loss.backward()
 
+            total_loss.backward()
 
             if i % GRAD_ACCUM_STEPS == 0:
                 # grad_norm = gradient_norm(model.region.parameters())
-                # pre_clip = gradient_norm(model.region.parameters())
-                torch.nn.utils.clip_grad_norm_(model.region.parameters(), 1.0)
+                pre_clip = gradient_norm(model.region.parameters())
+                torch.nn.utils.clip_grad_norm_(model.region.parameters(), 10.0)
                 post_clip = gradient_norm(model.region.parameters())
 
                 optimizer.step()
@@ -404,6 +421,12 @@ def main():
                 pbar.set_postfix(
                     {"step": i // GRAD_ACCUM_STEPS, "loss": total_loss.item(), "pre_grad_norm": pre_clip.item(), "post_grad_norm": post_clip.item()}
                 )
+                if (i // GRAD_ACCUM_STEPS) % 20 == 0:
+                    print("Checkpoint saved")
+                    save_file(
+                        model.state_dict(),
+                        f"/scratch/data/asif_rs/mooondream_models/moondream_finetune_1_{i//GRAD_ACCUM_STEPS}.safetensors",
+                    )
                 pbar.update(1)
                 wandb.log(
                     {
